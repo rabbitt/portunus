@@ -1,18 +1,21 @@
 .PHONY: deps vet format test publish clean
 
-SHELL  = bash
-GOPATH ?= $(HOME)/.go
-GOBIN  := $(GOPATH)/bin
-PATH   := $(GOPATH)/bin:$(PATH)
-PROJ   := f5er
-DOCKER_USERNAME ?= Monkey
-DOCKER_PASSWORD ?= Magic
+SHELL   = bash
+GOPATH  ?= $(HOME)/.go
+GOBIN   := $(GOPATH)/bin
+PATH    := $(GOPATH)/bin:$(PATH)
+REPO    := github.com/rabbitt/portunus
+PROJECT := portunus
+DOCKER_USERNAME ?= user
+DOCKER_PASSWORD ?= password
 
-LDFLAGS := -ldflags "-X main.commit=$$(git rev-parse HEAD)"
+LDFLAGS := -ldflags "-X $(REPO)/$(PROJECT).Revision=$$(git rev-parse HEAD)"
 
 .ONESHELL:
 
-all: vet format test $(PROJ) publish
+all: vet format test $(PROJECT) publish
+
+all-archs: linux windows darwin
 
 deps:
 	@echo "--- collecting ingredients :bento:"
@@ -20,7 +23,7 @@ deps:
 
 vet: deps
 	@export GOPATH=$(GOPATH)
-	go list -f '{{.Dir}}' ./... | grep -vP '(/vendor/|f5er$$)' | xargs go tool vet -all
+	go list -f '{{.Dir}}' ./... | grep -vP '(/vendor/|portunus$$)' | xargs go tool vet -all
 
 format:
 	@echo "--- checking for dirty ingredients :mag_right:"
@@ -44,21 +47,21 @@ test: format vet deps
 	@echo "+++ Is this thing working? :hammer_and_wrench:"
 	GOPATH=$(GOPATH) go test -cover -v
 
-$(PROJ): deps
-	CGO_ENABLED=0 GOPATH=$(GOPATH) go build $(LDFLAGS) -o $@ -v
+$(PROJECT): deps
+	CGO_ENABLED=0 GOPATH=$(GOPATH) go build $(LDFLAGS) -o bin/$@ -v
 	touch $@ && chmod 755 $@
 
 linux: deps
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOPATH=$(GOPATH) go build $(LDFLAGS) -o $(PROJ)-linux-amd64 -v
-	touch $(PROJ)-linux-amd64 && chmod 755 $(PROJ)-linux-amd64
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOPATH=$(GOPATH) go build $(LDFLAGS) -o bin/$(PROJECT)-linux-amd64 -v
+	touch $(PROJECT)-linux-amd64 && chmod 755 $(PROJECT)-linux-amd64
 
 windows: deps
-	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 GOPATH=$(GOPATH) go build $(LDFLAGS) -o $(PROJ)-windows-amd64.exe -v
-	touch $(PROJ)-windows-amd64.exe
+	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 GOPATH=$(GOPATH) go build $(LDFLAGS) -o bin/$(PROJECT)-windows-amd64.exe -v
+	touch $(PROJECT)-windows-amd64.exe
 
 darwin: deps
-	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 GOPATH=$(GOPATH) go build -o $(PROJ)-darwin-amd64 -v
-	touch $(PROJ)-darwin-amd64 && chmod 755 $(PROJ)-darwin-amd64
+	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 GOPATH=$(GOPATH) go build -o bin/$(PROJECT)-darwin-amd64 -v
+	touch $(PROJECT)-darwin-amd64 && chmod 755 $(PROJECT)-darwin-amd64
 
 ifdef TRAVIS_TAG
 publish: deps
@@ -68,4 +71,4 @@ publish: deps
 endif
 
 clean:
-	rm -rf $(PROJ) $(PROJ)-windows-amd64.exe $(PROJ)-linux-amd64 $(PROJ)-darwin-amd64 dist
+	rm -rf bin/$(PROJECT) bin/$(PROJECT)-windows-amd64.exe bin/$(PROJECT)-linux-amd64 bin/$(PROJECT)-darwin-amd64 dist

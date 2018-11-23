@@ -16,7 +16,6 @@
 package cmd
 
 import (
-	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -42,5 +41,4 @@ To configure your bash shell to load completions for each session add to your ba
 
 func init() {
 	rootCmd.AddCommand(completionCmd)
-	fmt.Println("completion loaded")
 }

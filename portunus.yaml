@@ -1,0 +1,87 @@
+server:
+  bind_address: 0.0.0.0:8080
+  tls.enabled: false
+  tls.cert: /path/to/cert
+  tls.key: /path/to/key
+
+logging:
+  level: info
+
+network:
+  max_idle_connections: 5000
+  max_idle_per_host: 100
+  timeouts:
+    connect: 5
+    read: 10
+    write: 15
+    keepalive: 20
+    idle_connection: 90
+    tls_handshake: 5
+    continue: 5
+
+transform:
+  request:
+    insert:
+      X-Route-Name: '{{route.name}}'
+      X-Origin: '{{route.name}}.{{req.header.x-domain}}'
+    delete:
+      - X-Domain
+      - X-Forwarded-For
+      - X-Forwarded-Host
+      - X-Forwarded-Proto
+  response:
+    insert:
+      X-Origin: '{{route.name}}.{{req.header.x-domain}}'
+      X-MatchRoute: '{{route.name}}'
+      X-MatchedPath: '{{route.match}}'
+
+routes:
+  app1:
+    upstream: http://{{route.name}}.{{req.header.x-domain}}
+    paths:
+      - '*'
+  app2:
+    upstream: http://{{route.name}}.{{req.header.x-domain}}
+    aggregate_chunked_requests: true
+    paths:
+      - '/foo*'
+      - '/bar*'
+      - '/baz*'
+      - '/foobarbaz*'
+      - '*php*'
+      - '/boo*'
+
+# New Relic configuration
+newrelic:
+  enabled: false
+  app_name:
+  license_key:
+  labels: {}
+  host_display_name:
+  high_security: true
+  proxy_url:
+
+error_pages:
+  server_error:
+    code: 500
+    body: |-
+      <html>
+        <head>
+          <title>500 - Internal Server Error</title>
+        </head>
+        <body>
+          <h1>500 - Internal Server Error</h1>
+          <p>Please try again later.</p>
+        </body>
+      </html>
+
+
+  not_found:
+    code: 404
+    body: |-
+      <html>
+        <head>
+          <title>404 - Not Found</title>
+        </head>
+        <body><h1>404 - Not Found</h1></body>
+      </html>
