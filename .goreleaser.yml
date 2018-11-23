@@ -1,0 +1,26 @@
+builds:
+  - goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+    env:
+      - CGO_ENABLED=0
+
+archive:
+  name_template: "portunus-{{ .Os }}-{{ .Arch }}"
+  format: binary
+
+dockers:
+  -
+    goos: linux
+    goarch: amd64
+    binary: portunus
+    image: rabbitt/portunus
+    dockerfile: Dockerfile
+    tag_templates:
+    - "{{ .Tag }}"
+    - "v{{ .Major }}"
+    - "v{{ .Major }}.{{ .Minor }}"
+    - latest

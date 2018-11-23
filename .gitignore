@@ -1,0 +1,15 @@
+# Ignore everything
+*
+# Don't ignore directories, so we can recurse into them
+!.gitkeep
+!vendor/.gitkeep
+!*/
+# Don't ignore .gitignore and *.foo files
+!.gitignore
+!*.go
+!Makefile
+!*.md
+!*.y*ml
+src
+pkg
+vendor
