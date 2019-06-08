@@ -16,63 +16,77 @@
 package server
 
 import (
+	"context"
 	"crypto/tls"
+	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httputil"
+	"os"
+	signals "os/signal"
 	"runtime"
+	"strings"
+	"syscall"
 	"time"
 
-	log "github.com/rabbitt/portunus/portunus/logging"
-	config "github.com/spf13/viper"
 	golog "log"
+
+	"github.com/coreos/go-systemd/activation"
+	log "github.com/rabbitt/portunus/portunus/logging"
+)
+
+const (
+	// DefaultBindingAddress is all addresses
+	DefaultBindingAddress = "0.0.0.0"
+	// DefaultBindingPort is standard unprivileged http
+	DefaultBindingPort = 8080
 )
 
 type Server struct {
 	router    *Router
 	proxy     *httputil.ReverseProxy
 	transport *http.Transport
+	server    *http.Server
 	startup   time.Time
+	address   string
+	finished  chan struct{}
+	logger    *io.PipeWriter
 }
 
 func NewServer() *Server {
-	server := &Server{}
-	server.router = NewRouter(server)
-	server.startup = time.Now()
-	log.InfoWithFields("Portunus starting", log.Fields{"bind_address": config.GetString("server.bind_address")})
+	s := &Server{}
+	s.router = NewRouter(s)
+	s.startup = time.Now()
+	s.address = BindAddress()
+	s.finished = make(chan struct{})
+	s.logger = log.Writer()
 
-	return server
-}
-
-func (self *Server) Run() int {
-	runtime.GOMAXPROCS(int(config.GetInt("server.threads")))
-
-	// Setup the logWriter for the proxy service (see: server#proxyHandler)
-	proxyLogWriter := log.Writer()
-	defer proxyLogWriter.Close()
-
-	self.proxy = &httputil.ReverseProxy{
+	s.proxy = &httputil.ReverseProxy{
 		Director:  func(req *http.Request) {}, // header rewrites are handled in proxyTransport
-		Transport: &proxyTransport{self},
-		ErrorLog:  golog.New(proxyLogWriter, "", 0),
+		Transport: NewProxyTransport(s),
+		ErrorLog:  golog.New(s.logger, "", 0),
 	}
 
-	self.transport = &http.Transport{
+	s.transport = &http.Transport{
 		Proxy: nil, // No proxying of upstream requests
 		DialContext: (&net.Dialer{
-			Timeout:   config.GetDuration("network.timeouts.connect") * time.Second,
-			KeepAlive: config.GetDuration("network.timeouts.keepalive") * time.Second,
+			Timeout:   Settings.Network.Timeouts.Connect,
+			KeepAlive: Settings.Network.Timeouts.Keepalive,
 			DualStack: true,
 		}).DialContext,
-		MaxIdleConns:          config.GetInt("network.max_idle_connections"),
-		MaxIdleConnsPerHost:   config.GetInt("network.max_idle_per_host"),
-		IdleConnTimeout:       config.GetDuration("network.timeouts.idle_connection") * time.Second,
-		TLSHandshakeTimeout:   config.GetDuration("network.timeouts.tls_handshake") * time.Second,
-		ExpectContinueTimeout: config.GetDuration("network.timeouts.continue") * time.Second,
+		MaxIdleConns:          Settings.Network.MaxIdleConnections,
+		MaxIdleConnsPerHost:   Settings.Network.MaxIdlePerHost,
+		IdleConnTimeout:       Settings.Network.Timeouts.IdleConnection,
+		TLSHandshakeTimeout:   Settings.Network.Timeouts.TLSHandshake,
+		ExpectContinueTimeout: Settings.Network.Timeouts.Continue,
 	}
 
-	if config.GetBool("server.tls.enabled") {
-		cfg := &tls.Config{
+	var tlsConfig *tls.Config
+	var tlsNextProto map[string]func(*http.Server, *tls.Conn, http.Handler)
+
+	if Settings.Server.TLS.Enabled {
+		tlsConfig = &tls.Config{
 			MinVersion:               tls.VersionTLS12,
 			CurvePreferences:         []tls.CurveID{tls.CurveP521, tls.CurveP384, tls.CurveP256},
 			PreferServerCipherSuites: true,
@@ -84,28 +98,125 @@ func (self *Server) Run() int {
 			},
 		}
 
-		srv := &http.Server{
-			Addr:         config.GetString("server.bind_address"),
-			ReadTimeout:  config.GetDuration("network.timeouts.read") * time.Second,
-			WriteTimeout: config.GetDuration("network.timeouts.write") * time.Second,
-			TLSNextProto: make(map[string]func(*http.Server, *tls.Conn, http.Handler), 0),
-			TLSConfig:    cfg,
-			Handler:      self.router.mux,
+		if !Settings.Server.HTTP2.Enabled {
+			tlsNextProto = make(map[string]func(*http.Server, *tls.Conn, http.Handler), 0)
 		}
-
-		log.Fatal(srv.ListenAndServeTLS(
-			config.GetString("server.tls.cert"), config.GetString("server.tls.key")))
-	} else {
-
-		srv := &http.Server{
-			Addr:         config.GetString("server.bind_address"),
-			ReadTimeout:  config.GetDuration("network.timeouts.read") * time.Second,
-			WriteTimeout: config.GetDuration("network.timeouts.write") * time.Second,
-			Handler:      self.router.mux,
-		}
-
-		log.Fatal(srv.ListenAndServe())
 	}
+
+	s.server = &http.Server{
+		Addr:         Settings.Server.BindAddress,
+		ReadTimeout:  Settings.Network.Timeouts.Read,
+		WriteTimeout: Settings.Network.Timeouts.Write,
+		Handler:      s.router.mux,
+		TLSNextProto: tlsNextProto,
+		TLSConfig:    tlsConfig,
+	}
+
+	return s
+}
+
+func BindAddress() (bindAddress string) {
+	bindAddress = Settings.Server.BindAddress
+	if bindAddress == "" {
+		bindAddress = fmt.Sprintf("%s:%d", DefaultBindingAddress, DefaultBindingPort)
+	} else if strings.HasPrefix(bindAddress, ":") { // e.g., ":<port>"
+		bindAddress = fmt.Sprintf("%s%s", DefaultBindingAddress, bindAddress)
+	} else if !strings.Contains(bindAddress, ":") { // e.g., "<ip>"
+		bindAddress = fmt.Sprintf("%s:%d", bindAddress, DefaultBindingPort)
+	}
+	return
+}
+
+func (s *Server) Listener() (*net.Listener, error) {
+	var listener net.Listener
+
+	listeners, err := activation.Listeners()
+	if err != nil {
+		return nil, err
+	}
+
+	if len(listeners) > 1 {
+		panic("Unexpected number of socket activation fds")
+	} else if len(listeners) == 1 {
+		listener = listeners[0]
+	} else if len(listeners) == 0 {
+		listener, err = net.Listen("tcp", s.address)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return &listener, nil
+}
+
+func (s *Server) ListenAndServe() {
+	listener, err := s.Listener()
+	if err != nil {
+		// Hard fail if we can't open a socket for listening
+		panic(err)
+	}
+
+	if Settings.Server.TLS.Enabled {
+		log.InfoWithFields("Portunus running, listening for TLS connections", log.Fields{"bind_address": s.address})
+		log.Error(s.server.ServeTLS(*listener, Settings.Server.TLS.Cert, Settings.Server.TLS.Key))
+	} else {
+		log.InfoWithFields("Portunus running, listening for non-TLS connections", log.Fields{"bind_address": s.address})
+		log.Error(s.server.Serve(*listener))
+	}
+}
+
+func (s *Server) HandleSignalShutdown() {
+	log.Info("Server is shutting down")
+	ctx, cancel := context.WithTimeout(context.Background(),
+		Settings.Server.ShutdownTimeout*time.Second)
+	defer cancel()
+
+	s.server.SetKeepAlivesEnabled(false)
+	if err := s.server.Shutdown(ctx); err != nil {
+		log.Panicf("cannot gracefully shut down the server: %s", err)
+	}
+	close(s.finished)
+	return
+}
+
+func (s *Server) HandleSignalReload() {
+	return
+}
+
+func (s *Server) SetupSignalHandlers() error {
+
+	sig := make(chan os.Signal, 1)
+	signals.Notify(sig, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP,
+		syscall.SIGUSR1, syscall.SIGUSR2)
+
+	go func() {
+		for {
+			signal := <-sig
+
+			switch signal {
+			case syscall.SIGTERM, syscall.SIGINT:
+				s.HandleSignalShutdown()
+			case syscall.SIGHUP:
+				s.HandleSignalReload()
+			case syscall.SIGUSR1, syscall.SIGUSR2:
+				// reserved
+			default:
+				log.Warnf("unhandled signal: %+v", signal)
+			}
+		}
+	}()
+
+	return nil
+}
+
+func (s *Server) Run() int {
+	defer s.logger.Close()
+	runtime.GOMAXPROCS(Settings.Server.Threads)
+
+	s.SetupSignalHandlers()
+	s.ListenAndServe()
+
+	<-s.finished
 
 	return 0
 }

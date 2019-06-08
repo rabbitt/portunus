@@ -16,6 +16,7 @@
 package logging
 
 import (
+	"errors"
 	"io"
 	"path"
 	"runtime"
@@ -23,13 +24,15 @@ import (
 	"sync"
 
 	"github.com/sirupsen/logrus"
-	config "github.com/spf13/viper"
 )
 
 var oneLogInstance sync.Once
 var logInstance *logrus.Logger
 
+// Fields is a copy of logrus fields
 type Fields = logrus.Fields
+
+var LogLevelParseError = errors.New("unable to parse log level")
 
 func newLogger() *logrus.Logger {
 	logger := logrus.New()
@@ -39,14 +42,21 @@ func newLogger() *logrus.Logger {
 		DisableSorting:         true,
 	})
 
-	logLevel := config.GetString("logging.level")
-	if level, err := logrus.ParseLevel(logLevel); err != nil {
-		logger.SetLevel(logrus.InfoLevel)
-	} else {
-		logger.SetLevel(level)
-	}
+	SetLogLevel(logger, "info")
 
 	return logger
+}
+
+func SetLogLevel(logger *logrus.Logger, logLevel string) (err error) {
+	var level logrus.Level
+
+	if level, err = logrus.ParseLevel(logLevel); err != nil {
+		return err
+	}
+
+	logger.SetLevel(level)
+
+	return
 }
 
 func Writer() *io.PipeWriter {

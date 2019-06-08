@@ -19,11 +19,11 @@ all-archs: linux windows darwin
 
 deps:
 	@echo "--- collecting ingredients :bento:"
-	GOPATH=$(GOPATH) dep ensure
+#	go mod download
 
 vet: deps
 	@export GOPATH=$(GOPATH)
-	go list -f '{{.Dir}}' ./... | grep -vP '(/vendor/|portunus$$)' | xargs go tool vet -all
+	go list -f '{{.Dir}}' ./... | grep -vP '(/vendor/|portunus$$)' | xargs go vet -all
 
 format:
 	@echo "--- checking for dirty ingredients :mag_right:"
@@ -48,19 +48,19 @@ test: format vet deps
 	GOPATH=$(GOPATH) go test -cover -v
 
 $(PROJECT): deps
-	CGO_ENABLED=0 GOPATH=$(GOPATH) go build $(LDFLAGS) -o bin/$@ -v
+	CGO_ENABLED=1 GOPATH=$(GOPATH) go build $(LDFLAGS) -o bin/$@ -v
 	touch $@ && chmod 755 $@
 
 linux: deps
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOPATH=$(GOPATH) go build $(LDFLAGS) -o bin/$(PROJECT)-linux-amd64 -v
+	CGO_ENABLED=1 GOOS=linux GOARCH=amd64 GOPATH=$(GOPATH) go build $(LDFLAGS) -o bin/$(PROJECT)-linux-amd64 -v
 	touch $(PROJECT)-linux-amd64 && chmod 755 $(PROJECT)-linux-amd64
 
 windows: deps
-	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 GOPATH=$(GOPATH) go build $(LDFLAGS) -o bin/$(PROJECT)-windows-amd64.exe -v
+	CGO_ENABLED=1 GOOS=windows GOARCH=amd64 GOPATH=$(GOPATH) go build $(LDFLAGS) -o bin/$(PROJECT)-windows-amd64.exe -v
 	touch $(PROJECT)-windows-amd64.exe
 
 darwin: deps
-	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 GOPATH=$(GOPATH) go build -o bin/$(PROJECT)-darwin-amd64 -v
+	CGO_ENABLED=1 GOOS=darwin GOARCH=amd64 GOPATH=$(GOPATH) go build -o bin/$(PROJECT)-darwin-amd64 -v
 	touch $(PROJECT)-darwin-amd64 && chmod 755 $(PROJECT)-darwin-amd64
 
 ifdef TRAVIS_TAG

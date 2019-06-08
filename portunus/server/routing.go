@@ -29,7 +29,6 @@ import (
 	"github.com/fanyang01/radix"
 	newrelic "github.com/newrelic/go-agent"
 	log "github.com/rabbitt/portunus/portunus/logging"
-	config "github.com/spf13/viper"
 	"github.com/zenazn/goji/web/mutil"
 )
 
@@ -44,7 +43,7 @@ var (
 type Router struct {
 	mux       *http.ServeMux
 	server    *Server
-	routeTree *routeTree
+	routeTree *RouteTree
 }
 
 func NewRouter(server *Server) *Router {
@@ -57,20 +56,20 @@ func NewRouter(server *Server) *Router {
 	return router
 }
 
-func (self *Router) setupRoutes() {
+func (router *Router) setupRoutes() {
 	// Metrics should be locked down by auth, or some other mechanism
-	self.mux.HandleFunc("/__portunus_metrics__", logRequest(expvarHandler()))
-	self.mux.HandleFunc("/__portunus_ping__", aliveHandler())
+	router.mux.HandleFunc("/__portunus_metrics__", logRequest(expvarHandler()))
+	router.mux.HandleFunc("/__portunus_ping__", aliveHandler())
 
-	proxyHandlerFunc := logRequest(metricHandler(self.server.proxyHandler()))
-	if config.GetBool("newrelic.enabled") {
-		self.mux.HandleFunc(newrelic.WrapHandleFunc(nrApp, "/", proxyHandlerFunc))
+	proxyHandlerFunc := logRequest(metricHandler(router.server.proxyHandler()))
+	if Settings.NewRelic.Enabled {
+		router.mux.HandleFunc(newrelic.WrapHandleFunc(nrApp, "/", proxyHandlerFunc))
 	} else {
-		self.mux.HandleFunc("/", proxyHandlerFunc)
+		router.mux.HandleFunc("/", proxyHandlerFunc)
 	}
 }
 
-func (self *Server) proxyHandler() http.HandlerFunc {
+func (server *Server) proxyHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		log.DebugWithFields("Request Received", log.Fields{
 			"remote.addr":  r.RemoteAddr,
@@ -79,7 +78,7 @@ func (self *Server) proxyHandler() http.HandlerFunc {
 			"user.agent":   r.UserAgent(),
 		})
 
-		self.proxy.ServeHTTP(w, r)
+		server.proxy.ServeHTTP(w, r)
 	}
 }
 
@@ -154,13 +153,13 @@ func (r *Route) AggregateRequestChunks() bool {
 	return r.AggReqChunks
 }
 
-type routeTree struct {
+type RouteTree struct {
 	mutex sync.Mutex
 	radix *radix.PatternTrie
 }
 
-func NewRouteTree() *routeTree {
-	return &routeTree{}
+func NewRouteTree() *RouteTree {
+	return &RouteTree{}
 }
 
 func normalizePath(path string) string {
@@ -169,60 +168,55 @@ func normalizePath(path string) string {
 	return buffer.String()
 }
 
-func (self *routeTree) Load() *routeTree {
+func (rt *RouteTree) Load() *RouteTree {
 	start := time.Now()
 	defer func() {
 		log.DebugWithFields("routeTree Loaded", log.Fields{"duration": time.Since(start)})
 	}()
 
-	self.mutex.Lock()
-	defer self.mutex.Unlock()
-	self.radix = radix.NewPatternTrie()
+	rt.mutex.Lock()
+	defer rt.mutex.Unlock()
+	rt.radix = radix.NewPatternTrie()
 
-	routes := config.Sub("routes")
-	for name, _ := range config.GetStringMap("routes") {
-		routeConfig := routes.Sub(fmt.Sprintf("%s", name))
-		routeAggReq := routeConfig.GetBool("aggregate_chunked_requests")
-		routeUpstream := routeConfig.GetString("upstream")
-
-		for _, path := range routeConfig.GetStringSlice("paths") {
+	for name, entry := range Settings.Routes {
+		for _, path := range entry.Paths {
 			route := &Route{
 				Name:         name,
 				MatchedPath:  path,
-				Upstream:     routeUpstream,
-				AggReqChunks: routeAggReq,
+				Upstream:     entry.Upstream,
+				AggReqChunks: entry.AggregateChunkedRequests,
 			}
 
-			self.radix.Add(normalizePath(path), route)
+			rt.radix.Add(normalizePath(path), route)
 
 			log.DebugWithFields("Added Route", log.Fields{
 				"route.name":                       name,
 				"route.path":                       path,
-				"route.upstream":                   routeUpstream,
-				"route.aggregate_chunked_requests": routeAggReq,
+				"route.upstream":                   entry.Upstream,
+				"route.aggregate_chunked_requests": entry.AggregateChunkedRequests,
 			})
 		}
 	}
 
-	return self
+	return rt
 }
 
-func (self *routeTree) insert(s string, route *Route) (*Route, bool) {
-	self.mutex.Lock()
-	defer self.mutex.Unlock()
+func (rt *RouteTree) insert(s string, route *Route) (*Route, bool) {
+	rt.mutex.Lock()
+	defer rt.mutex.Unlock()
 
-	if v, has := self.radix.Add(normalizePath(s), route); has {
+	if v, has := rt.radix.Add(normalizePath(s), route); has {
 		oldRoute := v.(*Route)
 		return oldRoute, true
 	}
 	return nil, false
 }
 
-func (self *routeTree) Lookup(s string) (*Route, bool) {
-	self.mutex.Lock()
-	defer self.mutex.Unlock()
+func (rt *RouteTree) Lookup(s string) (*Route, bool) {
+	rt.mutex.Lock()
+	defer rt.mutex.Unlock()
 
-	if v, ok := self.radix.Lookup(s); ok {
+	if v, ok := rt.radix.Lookup(s); ok {
 		return v.(*Route), true
 	}
 

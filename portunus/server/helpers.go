@@ -19,53 +19,51 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httputil"
+	"net/url"
 	"strings"
 
 	log "github.com/rabbitt/portunus/portunus/logging"
-	config "github.com/spf13/viper"
 )
 
+const TracingEnabled = "enabled"
+
 func transformHeaders(route *Route, httpObj interface{}) {
-	var transforms *config.Viper
+	var transforms ConfigTransformEntry
 	var headers *http.Header
 
 	if req, ok := httpObj.(*http.Request); ok {
 		headers = &req.Header
-		transforms = config.Sub("transform.request")
-		log.DebugWithFields("Rewriting Request headers", log.Fields{"route": route, "request.headers": headers})
+		transforms = Settings.Transform.Request
+		log.TraceWithFields("Rewriting Request headers", log.Fields{"route": route, "request.headers": headers})
 	} else {
 		headers = &(httpObj.(*http.Response)).Header
-		transforms = config.Sub("transform.response")
-		log.DebugWithFields("Rewriting Response headers", log.Fields{"route": route, "response.headers": headers})
+		transforms = Settings.Transform.Response
+		log.TraceWithFields("Rewriting Response headers", log.Fields{"route": route, "response.headers": headers})
 	}
 
-	if transforms != nil {
-		for header, value := range transforms.GetStringMapString("insert") {
-			headers.Add(header, interpolate(value, route, httpObj))
-			log.DebugWithFields("Adding Header", log.Fields{"header": header, "value.new": headers.Get(header), "value.old": value})
-		}
+	for header, value := range transforms.Insert {
+		headers.Add(header, interpolate(value, route, httpObj))
+		log.TraceWithFields("Adding Header", log.Fields{"header": header, "value.new": headers.Get(header), "value.old": value})
+	}
 
-		for header, value := range transforms.GetStringMapString("override") {
-			headers.Set(header, interpolate(value, route, httpObj))
-			log.DebugWithFields("Overwriting Header", log.Fields{"header": header, "value.new": headers.Get(header), "value.old": value})
-		}
+	for header, value := range transforms.Override {
+		headers.Set(header, interpolate(value, route, httpObj))
+		log.TraceWithFields("Overwriting Header", log.Fields{"header": header, "value.new": headers.Get(header), "value.old": value})
+	}
 
-		for _, header := range transforms.GetStringSlice("delete") {
-			log.DebugWithFields("Deleting Header", log.Fields{"header": header, "value.old": headers.Get(header)})
-			headers.Del(header)
-		}
+	for _, header := range transforms.Delete {
+		log.TraceWithFields("Deleting Header", log.Fields{"header": header, "value.old": headers.Get(header)})
+		headers.Del(header)
 	}
 }
 
-func getOrigin(route *Route, req *http.Request) string {
-	// TODO: perform a DNS lookup of the dynamic origin to ensure it's resolvable.
-	// If it's not, return the Unmatched Host and log an error.
-	// Note: DNS lookups might require a caching mechanism
-	if route != nil {
-		return interpolate(route.Upstream, route, req)
-	} else {
-		return interpolate("", &Route{Name: "unmatched", MatchedPath: "<unmatched>"}, req)
+func getUpstream(route *Route, req *http.Request) (upstream *url.URL, err error) {
+	upstream, err = url.Parse(interpolate(route.Upstream, route, req))
+	if err != nil {
+		return nil, err
 	}
+
+	return upstream, nil
 }
 
 func debug(data []byte, err error) {
@@ -85,24 +83,24 @@ func copyHeaders(src, dst http.Header) {
 }
 
 func RequestHeaderTracingEnabled(r *http.Request) bool {
-	return RequestBodyTracingEnabled(r) || (r.Header.Get("X-Trace-Request-Headers") == "true")
+	return RequestBodyTracingEnabled(r) || (r.Header.Get("X-Trace-Request-Headers") == TracingEnabled)
 }
 
 func RequestBodyTracingEnabled(r *http.Request) bool {
-	return (r.Header.Get("X-Trace-Request-Body") == "true")
+	return (r.Header.Get("X-Trace-Request-Body") == TracingEnabled)
 }
 
 func ResponseHeaderTracingEnabled(r *http.Response) bool {
-	return ResponseBodyTracingEnabled(r) || (r.Request.Header.Get("X-Trace-Response-Headers") == "true")
+	return ResponseBodyTracingEnabled(r) || (r.Request.Header.Get("X-Trace-Response-Headers") == TracingEnabled)
 }
 
 func ResponseBodyTracingEnabled(r *http.Response) bool {
-	return (r.Request.Header.Get("X-Trace-Response-Body") == "true")
+	return (r.Request.Header.Get("X-Trace-Response-Body") == TracingEnabled)
 }
 
 func TraceEventData(r interface{}) {
 	if request, ok := r.(*http.Request); ok {
-		log.InfoWithFields("Request Tracing", log.Fields{
+		log.WarnWithFields("Request Tracing", log.Fields{
 			"header.tracing": RequestHeaderTracingEnabled(request),
 			"body.tracing":   RequestBodyTracingEnabled(request),
 		})
@@ -111,7 +109,7 @@ func TraceEventData(r interface{}) {
 		}
 	} else {
 		response := r.(*http.Response)
-		log.InfoWithFields("Response Tracing", log.Fields{
+		log.WarnWithFields("Response Tracing", log.Fields{
 			"header.tracing": ResponseHeaderTracingEnabled(response),
 			"body.tracing":   ResponseBodyTracingEnabled(response),
 		})

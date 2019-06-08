@@ -13,8 +13,9 @@
 !.gitkeep
 !*/
 !*.md
-!*.y*ml
 !*.toml
+!*.sample
 src
 pkg
 vendor
+portanus.yaml

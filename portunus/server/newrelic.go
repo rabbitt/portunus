@@ -23,43 +23,42 @@ import (
 
 	newrelic "github.com/newrelic/go-agent"
 	log "github.com/rabbitt/portunus/portunus/logging"
-	config "github.com/spf13/viper"
 )
 
 var nrApp newrelic.Application
 
 func init() {
-	if config.GetBool("newrelic.enabled") {
+	if Settings.NewRelic.Enabled {
 		nrConfig := newrelic.NewConfig(
-			config.GetString("newrelic.app_name"),
-			config.GetString("newrelic.license_key"),
+			Settings.NewRelic.AppName,
+			Settings.NewRelic.LicenseKey,
 		)
 
-		nrConfig.HostDisplayName = config.GetString("newrelic.host_display_name")
-		nrConfig.Labels = config.GetStringMapString("newrelic.labels")
-		nrConfig.HighSecurity = config.GetBool("newrelic.high_security")
+		nrConfig.HostDisplayName = Settings.NewRelic.HostDisplayName
+		nrConfig.Labels = Settings.NewRelic.Labels
+		nrConfig.HighSecurity = Settings.NewRelic.HighSecurity
 
-		nrConfig.ErrorCollector.Enabled = config.GetBool("newrelic.error_collector.enabled")
-		nrConfig.ErrorCollector.IgnoreStatusCodes = config.Get("newrelic.error_collector.ignore_status_codes").([]int)
+		nrConfig.ErrorCollector.Enabled = Settings.NewRelic.ErrorCollector.Enabled
+		nrConfig.ErrorCollector.IgnoreStatusCodes = Settings.NewRelic.ErrorCollector.IgnoreStatusCodes
 
-		if nrProxyUrl := config.GetString("newrelic.proxy_url"); nrProxyUrl != "" {
-			if proxy_url, err := url.Parse(nrProxyUrl); err != nil {
+		if Settings.NewRelic.ProxyURL != "" {
+			if proxyURL, err := url.Parse(Settings.NewRelic.ProxyURL); err != nil {
 				log.Error(err)
 				// if a proxy is configured, but not a valid URL, then we just log the error
 				// and attempt a setup without the proxy
 			} else {
 				nrConfig.Transport = &http.Transport{
-					Proxy: http.ProxyURL(proxy_url),
+					Proxy: http.ProxyURL(proxyURL),
 					DialContext: (&net.Dialer{
-						Timeout:   config.GetDuration("network.timeouts.connect") * time.Second,
-						KeepAlive: config.GetDuration("network.timeouts.keepalive") * time.Second,
+						Timeout:   Settings.Network.Timeouts.Connect * time.Second,
+						KeepAlive: Settings.Network.Timeouts.Keepalive * time.Second,
 						DualStack: true,
 					}).DialContext,
 					MaxIdleConns:          50, // We don't use the values from config here because we should
 					MaxIdleConnsPerHost:   10, // only have a few hosts to connect to for NewRelic
-					IdleConnTimeout:       config.GetDuration("network.timeouts.idle_connection") * time.Second,
-					TLSHandshakeTimeout:   config.GetDuration("network.timeouts.tls_handshake") * time.Second,
-					ExpectContinueTimeout: config.GetDuration("network.timeouts.continue") * time.Second,
+					IdleConnTimeout:       Settings.Network.Timeouts.IdleConnection * time.Second,
+					TLSHandshakeTimeout:   Settings.Network.Timeouts.TLSHandshake * time.Second,
+					ExpectContinueTimeout: Settings.Network.Timeouts.Continue * time.Second,
 				}
 			}
 		}
