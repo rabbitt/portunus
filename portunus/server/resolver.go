@@ -23,6 +23,7 @@ func NewResolver(servers []string) *net.Resolver {
 		PreferGo: true,
 
 		Dial: (&dns.Client{
+			Resolver: new(dns.Cache),
 			Transport: &dns.Transport{
 				Proxy: nameservers.RoundRobin(),
 			},
