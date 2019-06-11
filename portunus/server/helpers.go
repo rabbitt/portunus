@@ -100,7 +100,7 @@ func ResponseBodyTracingEnabled(r *http.Response) bool {
 
 func TraceEventData(r interface{}) {
 	if request, ok := r.(*http.Request); ok {
-		log.WarnWithFields("Request Tracing", log.Fields{
+		log.DebugWithFields("Request Tracing", log.Fields{
 			"header.tracing": RequestHeaderTracingEnabled(request),
 			"body.tracing":   RequestBodyTracingEnabled(request),
 		})
@@ -109,7 +109,7 @@ func TraceEventData(r interface{}) {
 		}
 	} else {
 		response := r.(*http.Response)
-		log.WarnWithFields("Response Tracing", log.Fields{
+		log.DebugWithFields("Response Tracing", log.Fields{
 			"header.tracing": ResponseHeaderTracingEnabled(response),
 			"body.tracing":   ResponseBodyTracingEnabled(response),
 		})
@@ -141,7 +141,7 @@ func interpolate(value string, route *Route, httpObj interface{}) string {
 		value = strings.Replace(value, `{{route.match}}`, route.MatchedPath, -1)
 	}
 
-	if req != nil {
+	if req != nil && strings.Contains("{{req.header.", value) {
 		for header, values := range req.Header {
 			needle := fmt.Sprintf("{{req.header.%s}}", strings.ToLower(header))
 			if strings.Contains(value, needle) {
@@ -150,7 +150,7 @@ func interpolate(value string, route *Route, httpObj interface{}) string {
 		}
 	}
 
-	if resp != nil {
+	if resp != nil && strings.Contains("{{res.header.", value) {
 		for header, values := range resp.Header {
 			needle := fmt.Sprintf("{{res.header.%s}}", strings.ToLower(header))
 			if strings.Contains(value, needle) {

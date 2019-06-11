@@ -120,7 +120,7 @@ func (pt *ProxyTransport) RoundTrip(request *http.Request) (*http.Response, erro
 	var ips []string
 
 	// verify host is resolvable
-	ips, err = net.LookupHost(origin.Host)
+	ips, err = net.LookupHost(origin.Hostname())
 	if err != nil {
 		// When using custom DNS resolvers, DNSError doesn't return
 		// the actual custom DNS resolvers, but instead shows the system
